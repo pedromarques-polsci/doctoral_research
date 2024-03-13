@@ -244,19 +244,24 @@ latam_trade %>%
 commodity_prices <- readRDS("final_data/commodity_prices.RDS")
 latam_trade <- readRDS('final_data/latam_trade.RDS')
 
-latam_trade <- latam_trade %>% 
-  mutate(hscode = ifelse(hscode == 'TOTAL', 0, hscode))
-
 cmd_index <- latam_trade %>% 
-  left_join(y = commodity_prices) %>% 
-  filter(flowcode == 'NX')
+  mutate(hscode = ifelse(hscode == 'TOTAL', 0, hscode),
+         code = ifelse(hscode == 0, 'TOTAL', code)) %>% 
+  filter(flowcode == 'NX') %>% 
+  group_by(country, iso3c, year, code) %>%
+  reframe(net_trade = sum(value)) %>% 
+  ungroup() %>% 
+  left_join(commodity_prices)
 
-x <- cmd_index %>%
-    group_by(country, iso3c, year, code, commodity, fullname) %>%
-    reframe(
-      trade = sum(value)
-      ) %>% 
+cmd_index <- cmd_index %>% 
+  group_by(country, iso3c, year) %>% 
+  reframe(tot_index = 
+            sum(com_prices * (net_trade/net_trade[code=='TOTAL']), 
+                na.rm = TRUE)) %>% 
   ungroup()
+  
+# A operacao deu certo. O resultado ARG/1993 automatizado coincidiu com o resultado manual
+sum(1139.930776*99436110/-3655162880, 71.376916*17117192/-3655162880, 118.738223*244890365/-3655162880, 31.333333*-52504016/-3655162880, 1111.271067*-2300084/-3655162880, 71.118638*-44433541/-3655162880, 1914.956073*-6870/-3655162880, 58.019416*7665200/-3655162880, 404.518806*2665461/-3655162880, 927.639167*92983408/-3655162880, 359.526011*3353012/-3655162880, 80.665539*599116650/-3655162880, 124.116621*-1584444/-3655162880, 407.341962*225467/-3655162880, 102.039965*521582349/-3655162880, 2.598333*-13703268/-3655162880, 16.841103*508538200/-3655162880, 2703.635250*10627270/-3655162880, 1.019286*18672920/-3655162880, 64.518250*-57038263/-3655162880, 54.676266*-11476787/-3655162880, 237.250000*73594781/-3655162880, 460.882500*-121995/-3655162880, 37.707236*-31882423/-3655162880, 6.216567*166630268/-3655162880, 216.526092*1238694153/-3655162880, 503.149400*599589564/-3655162880, 230.138060*547057708/-3655162880, 10.020614*17926646/-3655162880, 682.172422*369183376/-3655162880, 185.635240*38228394/-3655162880, 5167.547204*-5343071/-3655162880, 140.211891*734823258/-3655162880, 414.133951*11637032/-3655162880, 319.728073*91511636/-3655162880, 963.964401*-2592126/-3655162880)
 
 # reframe(
 #   indicator = sum(com_prices * value / value[hscode == 0], na.rm = TRUE)
