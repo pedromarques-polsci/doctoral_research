@@ -1,6 +1,7 @@
 # Packages ----------------------------------------------------------------
 if(require(comtradr) == F) install.packages('comtradr'); require(comtradr)
 if(require(concordance) == F) install.packages('concordance'); require(concordance)
+if(require(countrycode) == F) install.packages('countrycode'); require(countrycode)
 if(require(dplyr) == F) install.packages('dplyr'); require(dplyr)
 if(require(haven) == F) install.packages('haven'); require(haven)
 if(require(readxl) == F) install.packages('readxl'); require(readxl)
@@ -198,7 +199,10 @@ get_data <- function(x) {
     
 }
 
-alltrade <- map(1988:2020, ~get_data(.x)) %>% list_rbind() # 1988 is the minimum year with available data
+# 1988 is the minimum year with available data
+alltrade <- map(1988:2020, ~get_data(.x)) %>% list_rbind() %>%  
+  mutate(country = countryname(country),
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) 
 
 ## 2.3 Data Transformation -----------------------------------------------------
 
@@ -245,6 +249,27 @@ latam_trade %>%
 commodity_prices <- readRDS("final_data/commodity_prices.RDS")
 latam_trade <- readRDS('final_data/latam_trade.RDS')
 
+x_value <- read.csv2("raw_data/worldbank_export_value_index.csv", 
+                     sep = ',', na.strings = "..", dec = ".") %>% 
+  slice(1:798)
+
+names(x_value) <- substr(names(x_value), 2, 5)
+
+x_value <- x_value %>% 
+  rename(variable = 1,
+         varcode =2,
+         country = 3,
+         iso3c = 4) %>% 
+  pivot_longer(cols = 5:67,
+               names_to = 'year', 
+               values_to = 'value') %>% 
+  pivot_wider(id_cols = c("country", "iso3c", "year"), names_from = 1,
+              values_from = 'value') %>% 
+  filter(iso3c %in% latam_iso$iso3c) %>% 
+  mutate(country = countryname(country),
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) %>% 
+  rename(unitvalue_idx = 4, volume_idx = 5, value_idx = 6)
+
 trade_colapse <- latam_trade %>% 
   mutate(hscode = ifelse(hscode == 'TOTAL', 0, hscode),
          code = ifelse(hscode == 0, 'TOTAL', code)) %>% 
@@ -255,16 +280,20 @@ trade_colapse <- latam_trade %>%
   group_by(country, iso3c, year) %>% 
   mutate(yweight = net_trade/net_trade[code=='TOTAL']) %>% 
   ungroup() %>% 
-  left_join(commodity_prices)
+  left_join(commodity_prices) %>% 
+  left_join(x_value)
 
 trade_colapse <- trade_colapse %>% 
-  mutate(ma = rollmean(yweight, 3, na.pad = TRUE, align = "right"), 
+  mutate(ma = rollmean(lag(yweight), 3, na.pad = TRUE, align = "right"), 
          .by = c(iso3c, code))
+
+trade_colapse %>% filter(iso3c == "ARG", code == "PALUM") %>% View()
   
 cmd_index <- trade_colapse %>% 
+  drop_na(ma, unitvalue_idx) %>%
   group_by(country, iso3c, year) %>% 
-  reframe(tot_index = 
-            sum(com_prices * (ma), 
+  reframe(cmd_idx = 
+            sum(com_prices/unitvalue_idx * (ma), 
                 na.rm = TRUE)) %>% 
   ungroup()
 
