@@ -6,6 +6,7 @@ if(require(dplyr) == F) install.packages('dplyr'); require(dplyr)
 if(require(haven) == F) install.packages('haven'); require(haven)
 if(require(readxl) == F) install.packages('readxl'); require(readxl)
 if(require(tidyverse) == F) install.packages('tidyverse'); require(tidyverse)
+if(require(xts) == F) install.packages('xts'); require(xts)
 if(require(zoo) == F) install.packages('zoo'); require(zoo)
 
 # Potential conflicts
@@ -249,6 +250,10 @@ latam_trade %>%
 commodity_prices <- readRDS("final_data/commodity_prices.RDS")
 latam_trade <- readRDS('final_data/latam_trade.RDS')
 
+latam_iso <- readRDS('final_data/db_socialx_pcp.RDS') %>%
+  select(iso3c) %>%
+  unique()
+
 x_value <- read.csv2("raw_data/worldbank_export_value_index.csv", 
                      sep = ',', na.strings = "..", dec = ".") %>% 
   slice(1:798)
@@ -287,8 +292,20 @@ trade_colapse <- trade_colapse %>%
   mutate(ma = rollmean(lag(yweight), 3, na.pad = TRUE, align = "right"), 
          .by = c(iso3c, code))
 
-trade_colapse %>% filter(iso3c == "ARG", code == "PALUM") %>% View()
-  
+cmd_index_fd <- trade_colapse %>% 
+  group_by(iso3c, code) %>% 
+  mutate(lag_prices = com_prices - lag(com_prices))
+
+cmd_index_fd <- cmd_index_fd %>% 
+  group_by(iso3c, year) %>% 
+  drop_na(ma, unitvalue_idx, lag_prices) %>%
+  reframe(fcmd_idx = 
+            sum(lag_prices/unitvalue_idx * (ma), 
+                na.rm = TRUE)) %>% 
+  ungroup()
+
+#cmd_index_fd %>% filter(iso3c == "ARG", code == "PALUM") %>% View()
+
 cmd_index <- trade_colapse %>% 
   drop_na(ma, unitvalue_idx) %>%
   group_by(country, iso3c, year) %>% 
@@ -297,4 +314,20 @@ cmd_index <- trade_colapse %>%
                 na.rm = TRUE)) %>% 
   ungroup()
 
-library(ggplot2)
+##########################
+# bilateral_trade <- function(x) {
+#   ct_get_data(
+#     reporter = 'all',
+#     flow_direction = c('import', 'export'),
+#     partner = 'all',
+#     frequency = 'A',
+#     start_date = x,
+#     end_date = x,
+#     commodity_classification = 'HS',
+#     commodity_code = c(hs_codes, "TOTAL")
+#   )
+# }
+# 
+# bi_trade <- map(1980:2020, ~bilateral_trade(.x)) %>% list_rbind() %>%  
+#   mutate(country = countryname(country),
+#          iso3c = countrycode(country, origin = "country.name", destination = "iso3c"))
