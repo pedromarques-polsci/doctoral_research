@@ -12,20 +12,19 @@ if(require(zoo) == F) install.packages('zoo'); require(zoo)
 # Potential conflicts
 # dplyr::filter(), Hmisc::sumarize()
 
-# SUMMARY -----------------------------------------------------------------
+# SUMMARY --------------------------------------------------------------
 # The current script are divided by three major chunks. 
 # The first one builds our commodity price dataset by aggregating three sources.
 # The second chunk extracts commodity trade data directly from UN Comtrade 
 # dataset through its API.
-# The final one ties the previous databases together and builds up a Terms of 
-# Trade Index inspired by Gruss and Kebhaj's (2019) methodology,  although our 
-# index has some minor, yet important differences.
+# The final one ties the previous databases together and builds up a Terms of Trade Index inspired by Gruss and Kebhaj's (2019) methodology,
+# although our index has some minor, yet important differences.
 
 # 1. COMMODITY PRICES --------------------------------------------------------
 ## 1.1 Source - IMF --------------------------------------------------------
 commodity_code <- read_xlsx('raw_data/commodity_codes.xlsx', sheet = 1, skip = 1) %>%
   rename('commodity' = 1,
-         'code' = 2)
+         'price_code' = 2)
 
 index <- 1:nrow(commodity_code)
 
@@ -70,30 +69,32 @@ commodity_prices[commodity_prices$id == '27', 'commodity'] <- 'Soft Sawn'
 commodity_prices <- commodity_prices %>%
   left_join(commodity_code) %>%
   left_join(commodity_full) %>%
-  relocate(id, commodity, code, fullname) %>%
+  relocate(id, commodity, price_code, fullname) %>%
   pivot_longer(cols = 5:38,
                names_to = 'year',
-               values_to = 'com_prices')
+               values_to = 'cmd_price')
 
+# We aggregate wood prices, given that trade data does not discriminate between Soft/Hard Sawnwood/Logs
 wood <- commodity_prices %>% 
-  filter(code == 'PTIMB') %>% 
-  mutate(code = 'PWMEAN',
+  filter(price_code == 'PTIMB') %>% 
+  mutate(price_code = 'PWMEAN',
          fullname = 'Wood Prices Mean (Soft/Hard Sawnwood, Soft/Hard Logs',
          commodity = 'Wood')
   
 
 logsk <- commodity_prices %>% 
-  filter(code == 'PLOGSK')
+  filter(price_code == 'PLOGSK')
 
 sawmal <- commodity_prices %>% 
-  filter(code == 'PSAWMAL')
+  filter(price_code == 'PSAWMAL')
 
 logore <- commodity_prices %>% 
-  filter(code == 'PLOGORE')
+  filter(price_code == 'PLOGORE')
 
 sawore <- commodity_prices %>% 
-  filter(code == 'PSAWORE')
+  filter(price_code == 'PSAWORE')
 
+# The aggregation is done by taking the mean price
 for (i in 1:34) {
   wood[i,6] <- (logsk[i,6] + sawmal[i,6] + logore[i,6] + sawore[i,6])/4
 }
@@ -103,31 +104,31 @@ commodity_prices <- commodity_prices %>% bind_rows(wood)
 ## 1.2 Source - UNCTAD -----------------------------------------------------
 unctad_prices <- read_xlsx('raw_data/unctad_commodity_prices.xlsx') %>%
   rename('year' = 1,
-         'code' = 2,
+         'price_code' = 2,
          'fullname' = 3,
-         'com_prices' = 4) %>%
+         'cmd_price' = 4) %>%
   select(-5, -6) %>% 
   mutate(year = as.character(year),
-         com_prices = as.double(com_prices)) %>% 
-  filter(code == "240100.01")
+         cmd_price = as.double(cmd_price)) %>% 
+  filter(price_code == "240100.01")
 
 ## 1.3 Source - FRED -----------------------------------------------------------
 orange_prices <- read_xlsx('raw_data/fred_orange_prices.xlsx', sheet = 1, skip = 10) %>%
   rename(year = 1,
-         com_prices = 2) %>%
+         cmd_price = 2) %>%
   mutate(year = format(year, format="%Y"),
          commodity = 'Orange',
-         code = 'PORANGUSDM',
+         price_code = 'PORANGUSDM',
          fullname = 'U.S. Dollars per Pound')
 
 ## 1.4 Joining both datasets -----------------------------------------------
 commodity_prices <- commodity_prices %>%
   bind_rows(unctad_prices, orange_prices)
 
-commodity_prices[commodity_prices$code == '240100.01', 'code'] <- 'PTOBAC'
-commodity_prices[commodity_prices$code == 'PTOBAC', 'id'] <- 111
-commodity_prices[commodity_prices$code == 'PTOBAC', 'commodity'] <- 'Tobacco'
-commodity_prices[commodity_prices$code == 'PORANGUSDM', 'id'] <- 112
+commodity_prices[commodity_prices$price_code == '240100.01', 'price_code'] <- 'PTOBAC'
+commodity_prices[commodity_prices$price_code == 'PTOBAC', 'id'] <- 111
+commodity_prices[commodity_prices$price_code == 'PTOBAC', 'commodity'] <- 'Tobacco'
+commodity_prices[commodity_prices$price_code == 'PORANGUSDM', 'id'] <- 112
 
 ## 1.5 Exporting prices dataset --------------------------------------------
 saveRDS(commodity_prices, "final_data/commodity_prices.RDS")
@@ -148,7 +149,7 @@ s3_table <- comtradr::ct_get_ref_table('S3')
 ## 2.2 Data extraction ---------------------------------------------------------
 
 # Harmonized Commodity Description and Coding System
-hs_codes <- c(
+hs_code_vector <- c(
   # Agricultural materials
   "5201", "41", "4001", "4401", "4403", "4406", "2401", "5101", 
   
@@ -167,7 +168,7 @@ hs_codes <- c(
   )
 
 
-cmd_price_code <- c("PCOTTIND", "PHIDE", "PRUBB", # Commodity price codes
+price_code_vector <- c("PCOTTIND", "PHIDE", "PRUBB", # Commodity price codes
         'PWMEAN', 'PWMEAN', 'PWMEAN',
         'PTOBAC', 'PWOOLC',
         
@@ -193,10 +194,10 @@ get_data <- function(x) {
     start_date = x,
     end_date = x,
     commodity_classification = 'HS',
-    commodity_code = c(hs_codes, "TOTAL")
+    commodity_code = c(hs_code_vector, "TOTAL")
   ) %>%
     select(reporterISO, reporterDesc, period, flowCode, cmdCode, cmdDesc, primaryValue) %>% 
-    rename(iso3c = 1, country = 2, year = 3, flowcode = 4, hscode = 5, cmd_desc = 6, value = 7)
+    rename(iso3c = 1, country = 2, year = 3, flowcode = 4, hscode = 5, cmd_desc = 6, trade = 7)
     
 }
 
@@ -220,7 +221,7 @@ latam_trade <- alltrade %>%
 
 latam_trade <- latam_trade %>% # Generating net exports
   reframe(
-    value = value[flowcode == "X"] - value[flowcode == "M"],
+    trade = trade[flowcode == "X"] - trade[flowcode == "M"],
     flowcode = "NX",
     .by = c(country, iso3c, year, hscode)) %>% 
   bind_rows(latam_trade) %>% 
@@ -232,11 +233,11 @@ latam_trade <- latam_trade %>% # Filling cmd description cells
   fill(cmd_desc, .direction = "downup") %>%
   ungroup()
 
-price_codes <- data.frame(hscode = hs_codes,
-                          code = cmd_price_code)
+trade_price_bind <- data.frame(hscode = hs_code_vector,
+                          price_code = price_code_vector)
 
 latam_trade <- latam_trade %>% 
-  left_join(y = price_codes)
+  left_join(y = trade_price_bind)
 
 ## 2.4 Exporting trade dataset --------------------------------------------
 
@@ -249,18 +250,17 @@ latam_trade %>%
 # 3. INDEX BUILDING ----------------------------------------------------------
 commodity_prices <- readRDS("final_data/commodity_prices.RDS")
 latam_trade <- readRDS('final_data/latam_trade.RDS')
-
 latam_iso <- readRDS('final_data/db_socialx_pcp.RDS') %>%
   select(iso3c) %>%
   unique()
 
-x_value <- read.csv2("raw_data/worldbank_export_value_index.csv", 
+euv_idx <- read.csv2("raw_data/worldbank_export_value_index.csv", 
                      sep = ',', na.strings = "..", dec = ".") %>% 
   slice(1:798)
 
-names(x_value) <- substr(names(x_value), 2, 5)
+names(euv_idx) <- substr(names(euv_idx), 2, 5)
 
-x_value <- x_value %>% 
+euv_idx <- euv_idx %>% 
   rename(variable = 1,
          varcode =2,
          country = 3,
@@ -275,59 +275,41 @@ x_value <- x_value %>%
          iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) %>% 
   rename(unitvalue_idx = 4, volume_idx = 5, value_idx = 6)
 
-trade_colapse <- latam_trade %>% 
+cmd_weight <- latam_trade %>% 
   mutate(hscode = ifelse(hscode == 'TOTAL', 0, hscode),
-         code = ifelse(hscode == 0, 'TOTAL', code)) %>% 
+         price_code = ifelse(hscode == 0, 'TOTAL', price_code)) %>% 
   filter(flowcode == 'NX') %>% 
-  group_by(country, iso3c, year, code) %>%
-  reframe(net_trade = sum(value)) %>%
+  group_by(country, iso3c, year, price_code) %>%
+  reframe(cmd_trade = sum(trade)) %>%
   ungroup() %>% 
   group_by(country, iso3c, year) %>% 
-  mutate(yweight = net_trade/net_trade[code=='TOTAL']) %>% 
+  mutate(yweight = cmd_trade/cmd_trade[price_code=='TOTAL']) %>% 
   ungroup() %>% 
   left_join(commodity_prices) %>% 
-  left_join(x_value)
+  left_join(euv_idx)
 
-trade_colapse <- trade_colapse %>% 
-  mutate(ma = rollmean(lag(yweight), 3, na.pad = TRUE, align = "right"), 
-         .by = c(iso3c, code))
+cmd_weight <- cmd_weight %>% 
+  mutate(ma_weight = rollmean(lag(yweight), 3, na.pad = TRUE, align = "right"), 
+         .by = c(iso3c, price_code))
 
-cmd_index_fd <- trade_colapse %>% 
-  group_by(iso3c, code) %>% 
-  mutate(lag_prices = com_prices - lag(com_prices))
+fd_idx <- cmd_weight %>% 
+  group_by(iso3c, price_code) %>% 
+  mutate(lag_prices = cmd_price - lag(cmd_price))
 
-cmd_index_fd <- cmd_index_fd %>% 
+fd_idx <- fd_idx %>% 
   group_by(iso3c, year) %>% 
-  drop_na(ma, unitvalue_idx, lag_prices) %>%
-  reframe(fcmd_idx = 
-            sum(lag_prices/unitvalue_idx * (ma), 
+  drop_na(ma_weight, unitvalue_idx, lag_prices) %>%
+  reframe(fd_cmd_idx = 
+            sum(lag_prices/unitvalue_idx * (ma_weight), 
                 na.rm = TRUE)) %>% 
   ungroup()
 
-#cmd_index_fd %>% filter(iso3c == "ARG", code == "PALUM") %>% View()
-
-cmd_index <- trade_colapse %>% 
-  drop_na(ma, unitvalue_idx) %>%
+lvl_idx <- cmd_weight %>% 
+  drop_na(ma_weight, unitvalue_idx) %>%
   group_by(country, iso3c, year) %>% 
   reframe(cmd_idx = 
-            sum(com_prices/unitvalue_idx * (ma), 
+            sum(cmd_price/unitvalue_idx * (ma_weight), 
                 na.rm = TRUE)) %>% 
   ungroup()
 
-##########################
-# bilateral_trade <- function(x) {
-#   ct_get_data(
-#     reporter = 'all',
-#     flow_direction = c('import', 'export'),
-#     partner = 'all',
-#     frequency = 'A',
-#     start_date = x,
-#     end_date = x,
-#     commodity_classification = 'HS',
-#     commodity_code = c(hs_codes, "TOTAL")
-#   )
-# }
-# 
-# bi_trade <- map(1980:2020, ~bilateral_trade(.x)) %>% list_rbind() %>%  
-#   mutate(country = countryname(country),
-#          iso3c = countrycode(country, origin = "country.name", destination = "iso3c"))
+# cmd_index_fd %>% filter(iso3c == "ARG", code == "PALUM") %>% View()
