@@ -1,5 +1,0 @@
-vparty2 %>% select(iso3c, country, year, pf_party_id, v2pariglef_ord) %>% dplyr::filter(iso3c == 'DOM', pf_party_id == '194') %>% View()
-
-vparty %>% select(iso3c, country, year, pf_party_id, v2pariglef_ord) %>% dplyr::filter(pf_party_id == '2309') %>% View()
-
-há duplicatas em leaders global

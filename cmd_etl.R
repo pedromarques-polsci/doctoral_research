@@ -1,4 +1,4 @@
-# Packages ----------------------------------------------------------------
+# Packages --------------------------------------------------------------
 if(require(comtradr) == F) install.packages('comtradr'); require(comtradr)
 if(require(concordance) == F) install.packages('concordance'); require(concordance)
 if(require(countrycode) == F) install.packages('countrycode'); require(countrycode)
@@ -13,12 +13,13 @@ if(require(zoo) == F) install.packages('zoo'); require(zoo)
 # dplyr::filter(), Hmisc::sumarize()
 
 # SUMMARY --------------------------------------------------------------
-# The current script are divided by three major chunks. 
+# The current script is divided by three major parts 
 # The first one builds our commodity price dataset by aggregating three sources.
-# The second chunk extracts commodity trade data directly from UN Comtrade 
+# The second part extracts commodity trade data directly from UN Comtrade
 # dataset through its API.
 # The final one ties the previous databases together and builds up a Terms of Trade Index inspired by Gruss and Kebhaj's (2019) methodology,
 # although our index has some minor, yet important differences.
+# The current version of this code is 19/03/2024 13:52
 
 # 1. COMMODITY PRICES --------------------------------------------------------
 ## 1.1 Source - IMF --------------------------------------------------------
@@ -209,9 +210,7 @@ alltrade <- map(1988:2020, ~get_data(.x)) %>% list_rbind() %>%
 ## 2.3 Data Transformation -----------------------------------------------------
 
 # LATAM Country Codes
-latam_iso <- readRDS('final_data/db_socialx_pcp.RDS') %>%
-  select(iso3c) %>%
-  unique()
+latam_iso <- readRDS("raw_data/latam_iso.RDS")
 
 setdiff(latam_iso$iso3c, alltrade$iso3c) 
 # As can be seen, our trade dataset does not contain info from Puerto Rico
@@ -248,11 +247,12 @@ latam_trade %>%
   saveRDS("final_data/latam_trade.RDS")
 
 # 3. INDEX BUILDING ----------------------------------------------------------
-commodity_prices <- readRDS("final_data/commodity_prices.RDS")
-latam_trade <- readRDS('final_data/latam_trade.RDS')
-latam_iso <- readRDS('final_data/db_socialx_pcp.RDS') %>%
-  select(iso3c) %>%
-  unique()
+# Only run this chunk if you haven't run all the code above.
+# commodity_prices <- readRDS("final_data/commodity_prices.RDS")
+# latam_trade <- readRDS('final_data/latam_trade.RDS')
+# latam_iso <- readRDS('final_data/db_socialx_pcp.RDS') %>%
+#   select(iso3c) %>%
+#   unique()
 
 euv_idx <- read.csv2("raw_data/worldbank_export_value_index.csv", 
                      sep = ',', na.strings = "..", dec = ".") %>% 
@@ -292,18 +292,6 @@ cmd_weight <- cmd_weight %>%
   mutate(ma_weight = rollmean(lag(yweight), 3, na.pad = TRUE, align = "right"), 
          .by = c(iso3c, price_code))
 
-fd_idx <- cmd_weight %>% 
-  group_by(iso3c, price_code) %>% 
-  mutate(lag_prices = cmd_price - lag(cmd_price))
-
-fd_idx <- fd_idx %>% 
-  group_by(iso3c, year) %>% 
-  drop_na(ma_weight, unitvalue_idx, lag_prices) %>%
-  reframe(fd_cmd_idx = 
-            sum(lag_prices/unitvalue_idx * (ma_weight), 
-                na.rm = TRUE)) %>% 
-  ungroup()
-
 lvl_idx <- cmd_weight %>% 
   drop_na(ma_weight, unitvalue_idx) %>%
   group_by(country, iso3c, year) %>% 
@@ -312,4 +300,9 @@ lvl_idx <- cmd_weight %>%
                 na.rm = TRUE)) %>% 
   ungroup()
 
-# cmd_index_fd %>% filter(iso3c == "ARG", code == "PALUM") %>% View()
+# Exporting index dataset
+lvl_idx %>%
+  saveRDS("final_data/cmd_price_idx.RDS") 
+
+lvl_idx %>% 
+  write_dta("final_data/cmd_price_idx.dta")
