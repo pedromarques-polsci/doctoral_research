@@ -10,9 +10,22 @@ if(require(readxl) == F) install.packages('readxl'); require(readxl)
 if(require(rvest) == F) install.packages('rvest'); require(rvest)
 if(require(tidyverse) == F) install.packages('tidyverse'); require(tidyverse)
 if(require(tidyr) == F) install.packages('tidyr'); require(tidyr)
+if(require(wbstats) == F) install.packages('wbstats'); require(wbstats)
+ 
+#if(require(ggpubr) == F) install.packages("ggpubr"); require(ggpubr)
 
 # Important conflicts
 # dplyr::filter(), Hmisc::sumarize()
+
+
+# Functions -------------------------------------------------------------
+wb_etl <- function(y, w, z){
+  wb_data(country = "countries_only", indicator = as.character(y), start_date = w, end_date = z) %>% 
+    rename(year = date) %>% 
+    mutate(country = countryname(country),
+           iso3c = countrycode(country, origin = "country.name", destination = "iso3c"),
+           year = as.double(year))
+}
 
 # 1. SOCIAL SPENDING -------------------------------------------
 
@@ -54,25 +67,27 @@ social_spending <- merge(social_spending, tmp2, by=c('year','country'),all=T) %>
 
 # dv_sample <- unique(social_spending$country)
 
-## 1.2 Current Social Spending ----------------------------
-socialx_current <- read_xlsx("raw_data/cepal_social_spending_current.xlsx") %>%
-  filter(.[[2]] %in% c('Central government', 'General government'),
-         .[[3]] %in% c('Venezuela (Bolivarian Republic of)', 'Peru'),
-         .[[4]] == 'Social expenditure') %>%
-select(3:6) %>%
+## 1.2 Public Spending by Function -----------------------------------
+# Public spending by function
+  public_spending <- read_xlsx("raw_data/cepal_public_spending.xlsx") %>%
+  select(c(-1, -2, -7, -8, -9)) %>%
   pivot_wider(names_from = 2,
               values_from = value,
               values_fill = NA) %>%
-  rename(country = 1, year = 2, soc_nom = 3) %>%
+  rename(country = 1, year = 2, total_bdg = 3, def_bdg = 4, envir_bdg = 5, health_bdg = 6, cult_bdg = 7, edu_bdg = 8, sprot_bdg = 9, statdisc = 10) %>%
+  mutate(def_p = def_bdg * 100 / total_bdg,
+         welfare_p = (health_bdg + edu_bdg + sprot_bdg)*100 / total_bdg) %>%
   arrange(country, year) %>%
   mutate(country = countryname(country),
          iso3c = countrycode(country, origin = "country.name",
-                             destination = "iso3c"))
+                             destination = "iso3c")) %>%
+  relocate(13, 1, 2, 3:12)
+
 # The only data available to Peru is General Government
 
-# 2. POLITICAL ECONOMY ---------------------------------------------------
-## 2.1 Terms of trade ------------------------------------------------------
-# Bertrand Gruss; Suhaib Kebhaj. (2019) "Commodity Terms of Trade: A New Database"
+# 2. POLITICAL ECONOMY -------------------------------------------------
+## 2.1 Terms of trade --------------------------------------------------
+### 2.1.1 Gruss & Kebhaj (2019) ----------------------------------------
 terms_of_trade <- read.csv2("raw_data/terms_of_trade_net_exports.csv", sep = ",", dec = ".") %>%
   select(1, 3, 5, 10) %>% # Commodity Net Export Price Index, Individual Commodities Weighted by Ratio of Net Exports to GDP (xm_gdp)
   dplyr::filter(Type.Name == "Historical, Rolling Weights, Index") %>%
@@ -83,7 +98,11 @@ terms_of_trade <- read.csv2("raw_data/terms_of_trade_net_exports.csv", sep = ","
 
 setdiff(unique(social_spending$country), unique(terms_of_trade$country))
 
-## 2.2 Real GDP Growth ------------------------------------------------------
+### 2.1.2 Marques (2024) -----------------------------------------------
+cmd_index <- readRDS("final_data/cmd_price_idx.RDS") %>% 
+  mutate(year = as.double(year))
+
+## 2.2 Real GDP Growth --------------------------------------------------
 # International Monetary Fund (https://www.imf.org/external/datamapper/NGDP_RPCH@WEO/OEMDC/ADVEC/WEOWORLD)
 real_gdp <- read_xls("raw_data/imf_real_gdp.xls", sheet = 1, na = 'no data') %>%
   slice(-c(1, 198:231)) %>%
@@ -122,6 +141,53 @@ cgov_debt <- read_xls("raw_data/imf_central_debt.xls", sheet = 1, na = 'no data'
          iso3c = countrycode(country, origin = "country.name", destination = "iso3c"),
          year = as.double(year)) %>%
   relocate(1, 4, 2, 3)
+
+## 2.6 Economic Openness -------------------------------------------------
+### 2.6.1 (Imports + Exports)/GDP ----------------------------------------
+ecopen <- wb_etl(y = 'NE.TRD.GNFS.ZS', w = 1980, z = 2024) %>% 
+  rename(ecopen = 5)
+
+### 2.6.2 Globalization --------------------------------------------------
+globalization <- read_dta('raw_data/kof_globalization.dta') %>% 
+  filter(!country %in% c("East Asia and Pacific", "Europe and Central Asia", "High income", "Latin America and Caribbean", "Low income", "Lower middle income", "Middle East and North Africa", "North America", "South Asia", "Sub-Saharan Africa", "Upper middle income", "World" )) %>% 
+  mutate(country = countryname(country),
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) %>% 
+  rename(kof_trade_df = KOFTrGIdf,
+         kof_trade_dj = KOFTrGIdj,
+         kof_finance_df = KOFFiGIdf,
+         kof_finance_dj = KOFFiGIdj,
+         kof_personal_df = KOFIpGIdf,
+         kof_personal_dj = KOFIpGIdj,
+         kof_info_df = KOFInGIdf,
+         kof_info_dj = KOFInGIdj,
+         kof_pol_df = KOFPoGIdf,
+         kof_pol_dj = KOFPoGIdj,
+         kof_idx = KOFGI,
+         kof_idx_df = KOFGIdf,
+         kof_idx_dj = KOFGIdj) %>% 
+  select(-c(KOFCuGIdf, KOFCuGIdj, KOFEcGI, KOFEcGIdf, KOFEcGIdj,
+            KOFTrGI, KOFFiGI, KOFSoGI, KOFSoGIdf, KOFSoGIdj,
+            KOFIpGI, KOFCuGI, KOFPoGI,code))
+         
+## 2.7 Dependency Ratio ---------------------------------------------------
+dp_ratio <- wb_etl(y = 'SP.POP.DPND', w = 1980, z = 2024) %>% 
+  rename(dp_ratio = 5)
+
+## 2.8 Unemployment -------------------------------------------------
+unemp <- wb_etl(y = 'SL.UEM.TOTL.NE.ZS', w = 1980, z = 2024) %>% 
+  rename(unemp = 5)
+
+## 2.9 Inflation --------------------------------------------------------
+inflation <- wb_etl(y = 'FP.CPI.TOTL.ZG', w = 1980, z = 2024) %>% 
+  rename(inflation = 5)
+
+## 2.10 Urban population ------------------------------------------------
+urban_pop <- wb_etl(y = 'SP.URB.TOTL.IN.ZS', w = 1980, z = 2024) %>% 
+  rename(urban_pop = 5)
+
+## 2.11 Natural Resources Depletion -------------------------------------
+res_depletion <- wb_etl(y = 'NY.ADJ.DRES.GN.ZS', w = 1980, z = 2024) %>% 
+  rename(res_depletion = 5)
 
 # 3. NON-CONTRIBUTORY POLICIES -------------------------------------------
 # Economic Commission for Latin America and the Caribbean
@@ -164,7 +230,7 @@ ncp_lpi <- "https://dds.cepal.org/bpsnc/lpi" %>%
 
 ncp_lpi$year <- substr(x = gsub(pattern = '\\D', "", ncp_lpi$lpi), 1, 4)
 
-# 4. ELECTION RESULTS -----------------------------------------------------
+# 4. INSTITUTIONAL COVARIATES----------------------------------------------
 ## 4.1 Database of Political Institutions ----------------------------------
 dpi <- read.csv2("raw_data/dpi.csv", sep = ",") %>%
   rename(country = countryname) %>%
@@ -186,7 +252,7 @@ dpi <- read.csv2("raw_data/dpi.csv", sep = ",") %>%
 
 setdiff(unique(social_spending$country), unique(dpi$country))
 
-## 4.2 Leaders Global  ---------------------------------------------------------
+## 4.2 Leaders Global  ------------------------------------------------
 # Dupont, Nils; Doring, Holger; Bederke, Paul. (2021). "Leaders Global: Party affiliations of leaders (HoS/HoG) in 183 countries, 1880–2020"
 
 leadglob <- read.csv2("raw_data/leadglob.csv", sep = ",") %>%
@@ -207,8 +273,7 @@ leadglob <- leadglob[!duplicated(leadglob[c("country","year")]),] # Removing dup
 
 setdiff(unique(social_spending$country), unique(leadglob$country))
 
-# 5. PARTY IDEOLOGY -------------------------------------------------------
-## 5.1. V-Party --------------------------------------------------------------
+## 4.3 V-Party ------------------------------------------------------------
 # Staffan I. Lindberg et al. (2022) “Codebook Varieties of Party Identity and Organization (V–Party) V2”
 vparty <- readRDS("raw_data/v_party.rds") %>%
   rename(country = country_name) %>%
@@ -216,14 +281,50 @@ vparty <- readRDS("raw_data/v_party.rds") %>%
   mutate(country = countryname(country),
          iso3c = countrycode(country, origin = "country.name", destination = "iso3c"))
 
-# 6. DATA ENRICHMENT ----------------------------------------------------------
-## 6.1 Political Institutions --------------------------------------------------
+## 4.4 Government Effectiveness --------------------------------
+gov_eff <- wb_etl(y = 'GE.EST', w = 1980, z = 2024) %>% 
+  rename(gov_eff = 5)
+
+## 4.5 Rule of Law ---------------------------------------------
+rulelaw <- wb_etl(y = 'RL.EST', w = 1980, z = 2024) %>% 
+  rename(rulelaw = 5)
+
+## 4.6 State Capacity ------------------------------------------
+state_cap <- read_dta('raw_data/state_capacity_v1.dta') %>% 
+  mutate(country = countryname(country),
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) %>% 
+  rename(state_cap = Capacity,)
+  select(country, iso3c, year, state_cap, tax_trade_tax)
+
+## 4.7 State Ownership ------------------------------------------
+fraser_freedom <- read_xlsx("raw_data/fraser_freedom.xlsx",
+                            sheet = 1, skip = 4) %>% 
+  rename(year = Year, freedom_idx = 5, state_own = 10) %>% 
+  mutate(country = countryname(Countries),
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) %>% 
+    select(c(country, year, freedom_idx, state_own, iso3c))
+
+# 5. Societal Dynamics -------------------------------------------------
+## 5.1 Net Migration ---------------------------------------------------
+net_migration <- wb_etl(y = 'SM.POP.NETM', w = 1980, z = 2024) %>% 
+  rename(net_migration = 5)
+
+## 5.2 Conflict -------------------------------------------------------
+warfare <- read_xlsx("raw_data/csp_political_violence.xlsx")
+
+## 5.3 Settler Mortality  ------------------------------------------------
+settler <- read.csv2("raw_data/qogdata_settler_mortality.csv") %>% 
+  mutate(country = countryname(cname),
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c"))
+
+# 6. DATA ENRICHMENT ---------------------------------------------------
+## 6.1 Political Institutions ------------------------------------------
 db_socialx_pcp <- dpi %>%
   select(country, iso3c, year, system, maj) %>% # Maj = Margin of Majority
   right_join(social_spending) %>%
   arrange(country, iso3c, year)
 
-## 6.2 Elections ---------------------------------------------------------------
+## 6.2 Elections -----------------------------------------------------------
 # Government party
 db_socialx_pcp <- leadglob %>%
   mutate(year = as.double(year)) %>%
@@ -248,7 +349,7 @@ db_socialx_pcp <- db_socialx_pcp %>%
 db_socialx_pcp <- db_socialx_pcp %>% 
   select(-HoS_name, -HoS_party_short, -HoS_party_english, -HoS_party_id, -HoG_name, -HoG_party_short, -HoG_party_english, -HoG_party_id)
 
-## 6.3 Party Ideology -------------------------------------------------------------
+## 6.3 Party Ideology ---------------------------------------------------
 db_socialx_pcp <- db_socialx_pcp %>%
    mutate(year1 = year)
 
@@ -267,8 +368,12 @@ db_socialx_pcp$region[db_socialx_pcp$country == "Mexico"] <- 'North America'
 db_socialx_pcp <- db_socialx_pcp %>%
   select(-c(iso3c.x, iso3c.y, year.x, iso3c.y, year.y, year2)) %>%
   rename(year = year1)
+
+## 6.4 Settler Mortality --------------------------------------------
+db_socialx_pcp <- db_socialx_pcp %>%
+  left_join(settler %>% select(iso3c, year, ajr_settmort), by = join_by(iso3c, year))
   
-## 6.5 Non-Contributory Policies -----------------------------------------------
+## 6.5 Non-Contributory Policies ------------------------------------
 ncp_cct <- ncp_cct %>%
   group_by(country, year) %>%
   mutate(year = as.double(year)) %>%
@@ -298,12 +403,14 @@ db_socialx_pcp <- db_socialx_pcp %>%
          n_lpi = coalesce(n_lpi, 0),
          n_ncp = n_cct + n_sp + n_lpi)
 
-## 6.6 Economic variables ------------------------------------------------------
+## 6.6 Economic variables -------------------------------------------------
 db_socialx_pcp <- db_socialx_pcp %>%
   left_join(terms_of_trade) %>%
   left_join(real_gdp) %>%
   left_join(gdp_pcp) %>%
-  left_join(cgov_debt)
+  left_join(cgov_debt) %>% 
+  left_join(cmd_index) %>% 
+  left_join(ecopen %>% select(3:6))
 
 db_socialx_pcp <- gov_revenue %>%
   select(country, iso3c, year, tax_inc_sc, nrtax_inc_sc) %>%
@@ -313,10 +420,19 @@ db_socialx_pcp <- db_socialx_pcp %>%
   relocate(region, system, iso3c, country, year, commtot, soc_pcp, cult_pcp, edu_pcp, sprot_pcp, health_pcp, house_pcp, envir_pcp, n_sp, n_cct, n_lpi, n_ncp, leader, party_name, pf_party_id, party_short, maj, v2pariglef_ord, v2pawelf_ord, v2paclient_ord, v2pagroup_2, v2pagroup_3, v2paind_ord, v2palocoff_ord, v2paactcom_ord, v2pasoctie_ord, v2paind_ord, real_gdp) %>%
   arrange(region, country, year)
 
-# 7. DATASET EXPORT -----------------------------------------------------------
+# 7. DATASET EXPORT ------------------------------------------------------
 write_excel_csv2(db_socialx_pcp, "final_data/db_socialx_pcp.csv", na = '')
 saveRDS(db_socialx_pcp, "final_data/db_socialx_pcp.RDS")
 write_dta(db_socialx_pcp, "final_data/db_socialx_pcp.dta")
+
+dataset <-readRDS("final_data/db_socialx_pcp.RDS")
+
+fixed.dum <-lm(soc_pcp ~ ajr_settmort + factor(country) - 1, data=dataset)
+summary(fixed.dum)
+
+fixed.dum <-lm(soc_pcp ~ cmd_idx + ecopen + 
+                 factor(country) - 1, data=dataset)
+summary(fixed.dum)
 
 # CODEBOOK ----------------------------------------------------------------
 db_socialx_pcp <- readRDS('final_data/db_socialx_pcp.RDS')
@@ -336,23 +452,21 @@ colSums(!is.na(db_socialx_pcp)) %>%
 
 colSums(!is.na(x)) %>%
   View()
-
 # LEFTOVERS ---------------------------------------------------------------
 ## The codes below are preserved for future reference.
-## Select a desired chunk and press "Ctrl + Shift + C" to undo its hashtags. 
+## Select a desired chunk and press "Ctrl + Shift + C" to undo its hashtags.
 
-## 1.2 Social Spending (%Total Public Spending) -------------------------------
-# Public spending by function ------------------------------------------
-# public_spending <- read_xlsx("raw_data/cepal_public_spending.xlsx") %>%
-#   select(c(-1, -2, -7, -8, -9)) %>%
+## 1.3 Current Social Spending ----------------------------
+# socialx_current <- read_xlsx("raw_data/cepal_social_spending_current.xlsx") %>%
+#   filter(.[[2]] %in% c('Central government', 'General government'),
+#          .[[3]] %in% c('Venezuela (Bolivarian Republic of)', 'Peru'),
+#          .[[4]] == 'Social expenditure') %>%
+#   select(3:6) %>%
 #   pivot_wider(names_from = 2,
 #               values_from = value,
 #               values_fill = NA) %>%
-#   rename(country = 1, year = 2, total_bdg = 3, def_bdg = 4, envir_bdg = 5, health_bdg = 6, cult_bdg = 7, edu_bdg = 8, sprot_bdg = 9, statdisc = 10) %>%
-#   mutate(def_p = def_bdg * 100 / total_bdg,
-#          welfare_p = (health_bdg + edu_bdg + sprot_bdg)*100 / total_bdg) %>%
+#   rename(country = 1, year = 2, soc_nom = 3) %>%
 #   arrange(country, year) %>%
 #   mutate(country = countryname(country),
-#          iso3c = countrycode(country, origin = "country.name", 
-#                              destination = "iso3c")) %>%
-#   relocate(13, 1, 2, 3:12)
+#          iso3c = countrycode(country, origin = "country.name",
+#                              destination = "iso3c"))
