@@ -21,8 +21,8 @@ if(require(zoo) == F) install.packages('zoo'); require(zoo)
 # although our index has some minor, yet important differences.
 # The current version of this code is 19/03/2024 13:52
 
-# 1. COMMODITY PRICES --------------------------------------------------------
-## 1.1 Source - IMF --------------------------------------------------------
+# 1. COMMODITY PRICES --------------------------------------------------
+## 1.1 Source - IMF ----------------------------------------------------
 commodity_code <- read_xlsx('raw_data/commodity_codes.xlsx', sheet = 1, skip = 1) %>%
   rename('commodity' = 1,
          'price_code' = 2)
@@ -131,10 +131,13 @@ commodity_prices[commodity_prices$price_code == 'PTOBAC', 'id'] <- 111
 commodity_prices[commodity_prices$price_code == 'PTOBAC', 'commodity'] <- 'Tobacco'
 commodity_prices[commodity_prices$price_code == 'PORANGUSDM', 'id'] <- 112
 
+commodity_prices <- commodity_prices %>% 
+  mutate(year = as.numeric(year))
+
 ## 1.5 Exporting prices dataset --------------------------------------------
 saveRDS(commodity_prices, "final_data/commodity_prices.RDS")
 write_excel_csv2(commodity_prices, "final_data/commodity_prices.csv", na = '')
-#write_dta(commodity_prices, "final_data/commodity_prices.dta")
+# write_dta(commodity_prices, "final_data/commodity_prices.dta")
 
 # 2. COMMODITY TRADE  ------------------------------------------------------
 
@@ -205,9 +208,10 @@ get_data <- function(x) {
 # 1988 is the minimum year with available data
 alltrade <- map(1988:2020, ~get_data(.x)) %>% list_rbind() %>%  
   mutate(country = countryname(country),
-         iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) 
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c"),
+         year = as.numeric(year))
 
-## 2.3 Data Transformation -----------------------------------------------------
+## 2.3 Data Transformation ------------------------------------------------
 
 # LATAM Country Codes
 latam_iso <- readRDS("raw_data/latam_iso.RDS")
@@ -239,14 +243,13 @@ latam_trade <- latam_trade %>%
   left_join(y = trade_price_bind)
 
 ## 2.4 Exporting trade dataset --------------------------------------------
-
 alltrade %>%
   saveRDS("final_data/alltrade.RDS")
 
 latam_trade %>%
   saveRDS("final_data/latam_trade.RDS")
 
-# 3. INDEX BUILDING ----------------------------------------------------------
+# 3. INDEX BUILDING --------------------------------------------------------
 # Only run this chunk if you haven't run all the code above.
 # commodity_prices <- readRDS("final_data/commodity_prices.RDS")
 # latam_trade <- readRDS('final_data/latam_trade.RDS')
@@ -272,7 +275,8 @@ euv_idx <- euv_idx %>%
               values_from = 'value') %>% 
   filter(iso3c %in% latam_iso$iso3c) %>% 
   mutate(country = countryname(country),
-         iso3c = countrycode(country, origin = "country.name", destination = "iso3c")) %>% 
+         iso3c = countrycode(country, origin = "country.name", destination = "iso3c"),
+         year = as.numeric(year)) %>% 
   rename(unitvalue_idx = 4, volume_idx = 5, value_idx = 6)
 
 cmd_weight <- latam_trade %>% 
